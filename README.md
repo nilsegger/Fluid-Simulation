@@ -1,4 +1,4 @@
-# Physically-based Simulation in Computer Graphics HS2023 - Course Exercises
+# Physically-based Simulation in Computer Graphics HS2024 - Course Exercises
 
 ## Installation
 
