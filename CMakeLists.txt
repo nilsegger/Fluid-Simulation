@@ -35,3 +35,4 @@ if (OPENMP_FOUND)
 endif()
 
 add_subdirectory(1_mass_spring)
+add_subdirectory(2_fem)
