@@ -60,14 +60,13 @@ public:
             for (int y = 0; y < m_density_height; ++y) {
                 for (int x = 0; x < m_density_width; ++x) {
                     // Simple gradient as an example
-                    int index = x + y * m_density_width + z * m_density_width * m_density_height;
+                        int index = x + y * m_density_width + z * m_density_width * m_density_height;
 
-                    if(x*x + y*y + z*z < 25) {
+                    if (x * x + y * y + z * z < 25) {
                         m_density[index] = 0.1;
                     } else {
                         m_density[index] = 0.0;
                     }
-
                 }
             }
         }
@@ -87,6 +86,48 @@ public:
         m_step++;
 
         return false;
+    }
+
+    bool rayIntersectsBox(const Eigen::Vector3f rayOrigin, const Eigen::Vector3f rayDir,
+        const Eigen::Vector3f boxMin, const Eigen::Vector3f boxMax, Eigen::Vector3f& entryPoint, Eigen::Vector3f& exitPoint) {
+        float tMin = (boxMin.x() - rayOrigin.x()) / rayDir.x();
+        float tMax = (boxMax.x() - rayOrigin.x()) / rayDir.x();
+
+        if (tMin > tMax) std::swap(tMin, tMax);
+
+        float tyMin = (boxMin.y() - rayOrigin.y()) / rayDir.y();
+        float tyMax = (boxMax.y() - rayOrigin.y()) / rayDir.y();
+
+        if (tyMin > tyMax) std::swap(tyMin, tyMax);
+
+        if ((tMin > tyMax) || (tyMin > tMax))
+            return false; // No intersection
+
+        if (tyMin > tMin)
+            tMin = tyMin;
+
+        if (tyMax < tMax)
+            tMax = tyMax;
+
+        float tzMin = (boxMin.z() - rayOrigin.z()) / rayDir.z();
+        float tzMax = (boxMax.z() - rayOrigin.z()) / rayDir.z();
+
+        if (tzMin > tzMax) std::swap(tzMin, tzMax);
+
+        if ((tMin > tzMax) || (tzMin > tMax))
+            return false; // No intersection
+
+        if (tzMin > tMin)
+            tMin = tzMin;
+
+        if (tzMax < tMax)
+            tMax = tzMax;
+
+        // Calculate entry and exit points
+        entryPoint = rayOrigin + rayDir * tMin;
+        exitPoint = rayOrigin + rayDir * tMax;
+
+        return true; // Intersection occurred
     }
 
     virtual void renderRenderGeometry(
