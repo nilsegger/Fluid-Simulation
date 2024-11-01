@@ -66,14 +66,13 @@ void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
 
 class FluidSim {
 public:
-
     FluidSim(): m_vu(RES_X * RES_Y * RES_Z, 0.0f), m_vv(RES_X * RES_Y * RES_Z, 0.0f),
-                m_vw(RES_X * RES_Y * RES_Z, 0.0f), m_s(RES_X*RES_Y*RES_Z, 1.0f),
+                m_vw(RES_X * RES_Y * RES_Z, 0.0f), m_s(RES_X * RES_Y * RES_Z, 1.0f),
                 m_density(RES_X * RES_Y * RES_Z, 0.0) {
     }
 
     void create_sphere_density() {
-        iterate([this](int x, int y, int z) {
+        iterate([this](const int i, const int x, const int y, const int z) {
             int index = x + y * RES_X + z * RES_X * RES_Y;
 
             int xx = x - RES_X / 2;
@@ -112,12 +111,10 @@ public:
     }
 
     void update(float t_step) {
-
         // Great video https://www.youtube.com/watch?v=iKAVRgIrUOU
         // 1. Modify velocity values (e.g. gravity)
-
-        iterate([this, t_step](int x, int y, int z) {
-            m_vv[index(x, y, z)] = m_vv[index(x, y, z)] + (t_step * -9.81f);
+        iterate([t_step, this](const int i, const int x, const int y, const int z) {
+            m_vv[i] = m_vv[i] + (t_step * -9.81f);
         });
 
         std::vector ss_vv(m_vv);
@@ -126,41 +123,51 @@ public:
         std::vector ss_d(m_density);
 
         // 2. make fluid incompressable (projection)
-        iterate([this, &ss_vv, &ss_vu, &ss_vw](int x, int y, int z) {
-
-            int i = index(x, y, z);
-            int ixpp = index(x+1, y, z);
-            int ixmm = index(x-1, y, z);
-            int iypp = index(x, y+1, z);
-            int iymm = index(x, y-1, z);
-            int izpp = index(x, y, z+1);
-            int izmm = index(x, y, z-1);
+        // TODO: why does this step not matter. Divergence always 0????????????????????????????
+        iterate([this, &ss_vv, &ss_vu, &ss_vw](const int i, const int x, const int y, const int z) {
+            int ixpp = index(x + 1, y, z);
+            int ixmm = index(x - 1, y, z);
+            int iypp = index(x, y + 1, z);
+            int iymm = index(x, y - 1, z);
+            int izpp = index(x, y, z + 1);
+            int izmm = index(x, y, z - 1);
 
             // Gauss-Seidel method
-            float divergence = 1.0f * (m_vu[i] - m_vu[ixpp] + m_vv[i] - m_vv[iypp] + m_vw[i] - m_vw[izpp]);
-            float s = m_s[ixpp] + m_s[ixmm] + m_s[iypp]+ m_s[iymm]+ m_s[izpp] + m_s[izmm];
-            ss_vu[i] += divergence * (m_s[i]) / s;
-            ss_vu[ixpp] -= divergence * (m_s[ixpp]) / s;
-            ss_vv[i] += divergence * (m_s[i]) / s;
-            ss_vv[iypp] -= divergence * (m_s[iypp]) / s;
-            ss_vw[i] += divergence * (m_s[i]) / s;
-            ss_vw[izpp] -= divergence * (m_s[izpp]) / s;
+            float divergence = m_vu[i] - m_vu[ixpp] + m_vv[i] - m_vv[iypp] + m_vw[i] - m_vw[izpp];
+            float s = m_s[ixpp] + m_s[ixmm] + m_s[iypp] + m_s[iymm] + m_s[izpp] + m_s[izmm];
+
+            if (divergence == 0) {
+                return;
+            }
+
+            // std::cout << divergence << '\n';
+
+            float p = divergence / s * 1.9f;
+
+            ss_vu[i] += m_s[ixmm] * p;
+            ss_vu[ixpp] -= m_s[ixpp] * p;
+            ss_vv[i] += m_s[iymm] * p;
+            ss_vv[iypp] -= m_s[iypp] * p;
+            ss_vw[i] += m_s[izmm] * p;
+            ss_vw[izpp] -= m_s[izpp] * p;
         });
 
         // 3. Move the velocity field (advection)
-        iterate([this, t_step, &ss_vv, &ss_vu, &ss_vw, &ss_d](int x, int y, int z) {
+        iterate([this, t_step, &ss_vv, &ss_vu, &ss_vw, &ss_d](const int i, const int x, const int y, const int z) {
             // semi-lagrangian
 
             // TODO: check for obstacles
-            int i = index(x, y, z);
 
             // Backtrack, find out where "particles" come from
             m_vu[i] = sample(ss_vu, ss_vv, ss_vw, x, y, z, SampleDirection::X, t_step);
             m_vv[i] = sample(ss_vu, ss_vv, ss_vw, x, y, z, SampleDirection::Y, t_step);
             m_vw[i] = sample(ss_vu, ss_vv, ss_vw, x, y, z, SampleDirection::Z, t_step);
 
+            //if(m_vu[i] + m_vv[i] + m_vw[i] != 0.0f)
+            //    std::cout << m_vu[i] << " " << m_vv[i] << " " << m_vw[i] << '\n';
+
             // Same backtracking based on the same velocities
-            m_density[i] = sample_density(ss_d, ss_vu, ss_vv, ss_vw, x, y, z, t_step);
+            m_density[i] = std::min(sample_density(ss_d, ss_vu, ss_vv, ss_vw, x, y, z, t_step), 1.0f);
         });
     }
 
@@ -180,11 +187,14 @@ private:
 
     // staggered grid index
     static int index(int x, int y, int z) {
-        return std::min(std::max(0, x + y * (RES_X) + z * (RES_X) * (RES_Y)),
-                        (RES_X) * (RES_Y) * (RES_Z) - 1);
+        int i = x + y * (RES_X) + z * (RES_X) * (RES_Y);
+        if (i < 0 || i >= RES_X * RES_Y * RES_Z) {
+            return -1;
+        }
+        return i;
     }
 
-    static void inverseIndex(int index, int& x, int& y, int& z) {
+    static void inverseIndex(int index, int &x, int &y, int &z) {
         z = index / (RES_X * RES_Y);
         int remainder = index % (RES_X * RES_Y);
         y = remainder / RES_X;
@@ -193,10 +203,10 @@ private:
 
     template<typename F>
     void iterate(const F &func) {
-        for(int i = 0; i < RES_X*RES_Y*RES_Z; i++) {
-            int x,y,z;
-            inverseIndex(i, x, y,z );
-            func(x,y,z);
+        for (int i = 0; i < RES_X * RES_Y * RES_Z; i++) {
+            int x, y, z;
+            inverseIndex(i, x, y, z);
+            func(i, x, y, z);
         }
     }
 
@@ -205,66 +215,101 @@ private:
     };
 
     // Move back by new velocity and uniformly sample value
-    float sample(std::vector<float>& ss_vu, std::vector<float>& ss_vv, std::vector<float>& ss_vw, int x, int y, int z, SampleDirection direction, float t_step) {
+    float sample(std::vector<float> &ss_vu, std::vector<float> &ss_vv, std::vector<float> &ss_vw, int x, int y, int z,
+                 SampleDirection direction, float t_step) {
         int i = index(x, y, z);
+
+        if (i == -1) return 0.0f;
 
         // Vector to move back by, different depending on sample direction
         float vx = ss_vu[i] * t_step;
         float vy = ss_vv[i] * t_step;
         float vz = ss_vw[i] * t_step;
 
-        switch(direction) {
+        switch (direction) {
             case X: {
-                vy = (ss_vv[i] + ss_vv[index(x+1, y, z)] + ss_vv[index(x, y+1, z)] + ss_vv[index(x+1, y+1, z)]) / 4.0f;
-                vz = (ss_vw[i] + ss_vw[index(x+1, y, z)] + ss_vw[index(x, y, z+1)] + ss_vw[index(x+1, y, z+1)]) / 4.0f;
+                vy = (ss_vv[i] + ss_vv[index(x + 1, y, z)] + ss_vv[index(x, y + 1, z)] + ss_vv[index(x + 1, y + 1, z)])
+                     / 4.0f;
+                vz = (ss_vw[i] + ss_vw[index(x + 1, y, z)] + ss_vw[index(x, y, z + 1)] + ss_vw[index(x + 1, y, z + 1)])
+                     / 4.0f;
                 break;
             }
             case Y: {
-                vx = (ss_vu[i] + ss_vu[index(x+1, y, z)] + ss_vu[index(x, y+1, z)] + ss_vu[index(x+1, y+1, z)]) / 4.0f;
-                vz = (ss_vw[i] + ss_vw[index(x, y+1, z)] + ss_vw[index(x, y, z+1)] + ss_vw[index(x, y+1, z+1)]) / 4.0f;
+                vx = (ss_vu[i] + ss_vu[index(x + 1, y, z)] + ss_vu[index(x, y + 1, z)] + ss_vu[index(x + 1, y + 1, z)])
+                     / 4.0f;
+                vz = (ss_vw[i] + ss_vw[index(x, y + 1, z)] + ss_vw[index(x, y, z + 1)] + ss_vw[index(x, y + 1, z + 1)])
+                     / 4.0f;
                 break;
             }
             case Z: {
-                vx = (ss_vu[i] + ss_vu[index(x+1, y, z)] + ss_vu[index(x, y, z+1)] + ss_vu[index(x+1, y, z+1)]) / 4.0f;
-                vy = (ss_vw[i] + ss_vw[index(x, y+1, z)] + ss_vw[index(x, y, z+1)] + ss_vw[index(x, y+1, z+1)]) / 4.0f;
+                vx = (ss_vu[i] + ss_vu[index(x + 1, y, z)] + ss_vu[index(x, y, z + 1)] + ss_vu[index(x + 1, y, z + 1)])
+                     / 4.0f;
+                vy = (ss_vv[i] + ss_vv[index(x, y + 1, z)] + ss_vv[index(x, y, z + 1)] + ss_vv[index(x, y + 1, z + 1)])
+                     / 4.0f;
                 break;
             }
         }
 
         // Move back
-        float nux = (float)x - vx;
-        float nvx = (float)y - vy;
-        float nwx = (float)z - vz;
+        float nux = (float) x - vx;
+        float nvx = (float) y - vy;
+        float nwx = (float) z - vz;
 
         switch (direction) {
             case X: {
-                float w0 = nux - std::floor(nux);
-                float w1 = 1.0f - w0;
-                return w0 * ss_vu[index(nux, nvx, nwx)] + w1 * ss_vu[index(nux + 1, nvx, nwx)];
+                float w1 = nux - std::floor(nux);
+                float w0 = 1.0f - w0;
+
+                float v0 = 0.0f;
+                if (index(nux, nvx, nwx) != -1) {
+                    v0 = ss_vu[index(nux, nvx, nwx)];
+                }
+                float v1 = 0.0f;
+                if (index(nux + 1, nvx, nwx) != -1) {
+                    v1 = ss_vu[index(nux + 1, nvx, nwx)];
+                }
+                return w0 * v0 + w1 * v1;
             }
             case Y: {
-                float w0 = nvx - std::floor(nvx);
-                float w1 = 1.0f - w0;
-                return w0 * ss_vu[index(nux, nvx, nwx)] + w1 * ss_vu[index(nux, nvx+1, nwx)];
+                float w1 = nvx - std::floor(nvx);
+                float w0 = 1.0f - w0;
+                float v0 = 0.0f;
+                if (index(nux, nvx, nwx) != -1) {
+                    v0 = ss_vv[index(nux, nvx, nwx)];
+                }
+                float v1 = 0.0f;
+                if (index(nux, nvx + 1, nwx) != -1) {
+                    v1 = ss_vv[index(nux, nvx + 1, nwx)];
+                }
+                return w0 * v0 + w1 * v1;
             }
             case Z: {
-                float w0 = nwx - std::floor(nwx);
-                float w1 = 1.0f - w0;
-                return w0 * ss_vu[index(nux, nvx, nwx)] + w1 * ss_vu[index(nux, nvx, nwx+1)];
+                float w1 = nwx - std::floor(nwx);
+                float w0 = 1.0f - w0;
+                float v0 = 0.0f;
+                if (index(nux, nvx, nwx) != -1) {
+                    v0 = ss_vw[index(nux, nvx, nwx)];
+                }
+                float v1 = 0.0f;
+                if (index(nux, nvx, nwx + 1) != -1) {
+                    v1 = ss_vw[index(nux + 1, nvx, nwx + 1)];
+                }
+                return w0 * v0 + w1 * v1;
             }
         }
 
         return 0.0f;
     }
 
-        // Move back by new velocity and uniformly sample value
-    float sample_density(std::vector<float>& density, std::vector<float>& ss_vu, std::vector<float>& ss_vv, std::vector<float>& ss_vw, int x, int y, int z, float t_step) {
+    // Move back by new velocity and uniformly sample value
+    float sample_density(std::vector<float> &density, std::vector<float> &ss_vu, std::vector<float> &ss_vv,
+                         std::vector<float> &ss_vw, int x, int y, int z, float t_step) {
         int i = index(x, y, z);
 
         // Vector to move back by, different depending on sample direction
-        float vx = (ss_vu[i] + ss_vu[index(x+1, y, z)]) / 2.0f * t_step;
-        float vy = (ss_vv[i] + ss_vv[index(x, y+1, z)]) / 2.0f * t_step;
-        float vz = (ss_vw[i] + ss_vw[index(x, y, z+1)]) / 2.0f * t_step;
+        float vx = (ss_vu[i] + ss_vu[index(x + 1, y, z)]) / 2.0f * t_step;
+        float vy = (ss_vv[i] + ss_vv[index(x, y + 1, z)]) / 2.0f * t_step;
+        float vz = (ss_vw[i] + ss_vw[index(x, y, z + 1)]) / 2.0f * t_step;
 
         // Move back, lands within 4 cells origins -> interpolate
         float nx = static_cast<float>(x) - vx;
@@ -278,28 +323,40 @@ private:
         float z1 = std::floor(nz);
         float z2 = ny - z1 >= 0.5 ? std::ceil(nz) : z1 - 1;
 
-        if(x1 > x2) std::swap(x1, x2);
-        if(y1 > y2) std::swap(y1, y2);
-        if(z1 > z2) std::swap(z1, z2);
-        if(x1 == x2) x2++;
-        if(y1 == y2) y2++;
-        if(z1 == z2) z2++;
+        if (x1 > x2) std::swap(x1, x2);
+        if (y1 > y2) std::swap(y1, y2);
+        if (z1 > z2) std::swap(z1, z2);
+        if (x1 == x2) x2++;
+        if (y1 == y2) y2++;
+        if (z1 == z2) z2++;
 
         // Trilinier interpolation
         float u = (nx - x1) / (x2 - x1);
         float v = (ny - y1) / (y2 - y1);
         float w = (nz - z1) / (z2 - z1);
 
-        int i1 = index(x1, y1, z1); float w1 = (1.0f - u) * (1.0f - v) * (1.0f - w);
-        int i2 = index(x2, y1, z1); float w2 = u * (1.0f - v) * (1.0f - w);
-        int i3 = index(x1, y2, z1); float w3 = (1.0f - u) * v * (1.0f - w);
-        int i4 = index(x1, y1, z2); float w4 = (1.0f - u) * (1.0f - v) * w;
-        int i5 = index(x2, y2, z1); float w5 = u * v * (1.0f - w);
-        int i6 = index(x2, y1, z2); float w6 = u * (1.0f - v) * w;
-        int i7 = index(x1, y2, z2); float w7 = (1.0f - u) * v * w;
-        int i8 = index(x2, y2, z2); float w8 = u*v*w;
+        int i1 = index(x1, y1, z1);
+        float w1 = (1.0f - u) * (1.0f - v) * (1.0f - w);
+        int i2 = index(x2, y1, z1);
+        float w2 = u * (1.0f - v) * (1.0f - w);
+        int i3 = index(x1, y2, z1);
+        float w3 = (1.0f - u) * v * (1.0f - w);
+        int i4 = index(x1, y1, z2);
+        float w4 = (1.0f - u) * (1.0f - v) * w;
+        int i5 = index(x2, y2, z1);
+        float w5 = u * v * (1.0f - w);
+        int i6 = index(x2, y1, z2);
+        float w6 = u * (1.0f - v) * w;
+        int i7 = index(x1, y2, z2);
+        float w7 = (1.0f - u) * v * w;
+        int i8 = index(x2, y2, z2);
+        float w8 = u * v * w;
 
-        float result =  w1 * density[i1] + w2 * density[i2] + w3 * density[i3] + w4 * density[i4] + w5 * density[i5] + w6 * density[i6] + w7 * density[i7] + w8 * density[i8];
+        float result = w1 * (i1 != -1 ? density[i1] : 0.0f) + w2 * (i2 != -1 ? density[i2] : 0.0f) + w3 * (
+                           i3 != -1 ? density[i3] : 0.0f) +
+                       w4 * (i4 != -1 ? density[i4] : 0.0f) + w5 * (i5 != -1 ? density[i5] : 0.0f) + w6
+                       * (i6 != -1 ? density[i6] : 0.0f) + w7 * (i7 != -1 ? density[i7] : 0.0f) + w8 * (
+                           i8 != -1 ? density[i8] : 0.0f);
         return result;
     }
 };
@@ -391,8 +448,7 @@ int main() {
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
             glfwSetWindowShouldClose(window, true);
 
-
-        sim.update(std::min(1.0 / 30.0f, deltaTime / 1000.0f));
+        sim.update(std::min(deltaTime / 1000.0f, 1.0 / 30.0));
 
         // Render
         glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
@@ -415,7 +471,9 @@ int main() {
         deltaTime = elapsed.count();
 
         // Print or log the frame time in milliseconds
-        std::cout << "Frame time: " << deltaTime << " ms. Using " << std::min(1.0 / 30.0f, deltaTime / 1000.0f) << "s" << std::endl;
+        if (deltaTime / 1000.f > 1.0 / 30.0) std::cerr << "Simulation lagging behind.\n";
+        std::cout << "Frame time: " << deltaTime << " ms." << std::endl;
+
 
         // Swap buffers and poll events
         glfwSwapBuffers(window);
