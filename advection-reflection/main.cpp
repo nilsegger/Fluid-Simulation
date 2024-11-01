@@ -73,22 +73,18 @@ public:
     }
 
     void create_sphere_density() {
-        for (int x = 0; x < RES_X; x++) {
-            for (int y = 0; y < RES_Y; y++) {
-                for (int z = 0; z < RES_Z; z++) {
-                    int index = x + y * RES_X + z * RES_X * RES_Y;
+        iterate([this](int x, int y, int z) {
+            int index = x + y * RES_X + z * RES_X * RES_Y;
 
-                    int xx = x - RES_X / 2;
-                    int yy = y - RES_Y / 2;
-                    int zz = z - RES_Z / 2;
-                    if (xx * xx + yy * yy + zz * zz < 16 * 16) {
-                        m_density[index] = float(16 * 16 - (xx * xx + yy * yy + zz * zz)) / float(16 * 16) * 0.1;
-                    } else {
-                        m_density[index] = 0.0;
-                    }
-                }
+            int xx = x - RES_X / 2;
+            int yy = y - RES_Y / 2;
+            int zz = z - RES_Z / 2;
+            if (xx * xx + yy * yy + zz * zz < 16 * 16) {
+                m_density[index] = float(16 * 16 - (xx * xx + yy * yy + zz * zz)) / float(16 * 16) * 0.1;
+            } else {
+                m_density[index] = 0.0;
             }
-        }
+        });
     }
 
     void bind_density(GLuint shaderProgram) {
@@ -130,7 +126,7 @@ public:
         std::vector ss_d(m_density);
 
         // 2. make fluid incompressable (projection)
-        iterate([this, t_step, &ss_vv, &ss_vu, &ss_vw](int x, int y, int z) {
+        iterate([this, &ss_vv, &ss_vu, &ss_vw](int x, int y, int z) {
 
             int i = index(x, y, z);
             int ixpp = index(x+1, y, z);
@@ -159,13 +155,12 @@ public:
             int i = index(x, y, z);
 
             // Backtrack, find out where "particles" come from
-            // u component
             m_vu[i] = sample(ss_vu, ss_vv, ss_vw, x, y, z, SampleDirection::X, t_step);
             m_vv[i] = sample(ss_vu, ss_vv, ss_vw, x, y, z, SampleDirection::Y, t_step);
             m_vw[i] = sample(ss_vu, ss_vv, ss_vw, x, y, z, SampleDirection::Z, t_step);
 
+            // Same backtracking based on the same velocities
             m_density[i] = sample_density(ss_d, ss_vu, ss_vv, ss_vw, x, y, z, t_step);
-
         });
     }
 
@@ -189,14 +184,19 @@ private:
                         (RES_X) * (RES_Y) * (RES_Z) - 1);
     }
 
+    static void inverseIndex(int index, int& x, int& y, int& z) {
+        z = index / (RES_X * RES_Y);
+        int remainder = index % (RES_X * RES_Y);
+        y = remainder / RES_X;
+        x = remainder % RES_X;
+    }
+
     template<typename F>
     void iterate(const F &func) {
-        for (int x = 1; x < RES_X - 1; x++) {
-            for (int y = 1; y < RES_Y - 1; y++) {
-                for (int z = 1; z < RES_Z - 1; z++) {
-                    func(x, y, z);
-                }
-            }
+        for(int i = 0; i < RES_X*RES_Y*RES_Z; i++) {
+            int x,y,z;
+            inverseIndex(i, x, y,z );
+            func(x,y,z);
         }
     }
 
@@ -299,7 +299,8 @@ private:
         int i7 = index(x1, y2, z2); float w7 = (1.0f - u) * v * w;
         int i8 = index(x2, y2, z2); float w8 = u*v*w;
 
-        return w1 * density[i1] + w2 * density[i2] + w3 * density[i3] + w4 * density[i4] + w5 * density[i5] + w6 * density[i6] + w7 * density[i7] + w8 * density[i8];
+        float result =  w1 * density[i1] + w2 * density[i2] + w3 * density[i3] + w4 * density[i4] + w5 * density[i5] + w6 * density[i6] + w7 * density[i7] + w8 * density[i8];
+        return result;
     }
 };
 
