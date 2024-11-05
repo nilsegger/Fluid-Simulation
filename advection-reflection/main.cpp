@@ -7,7 +7,6 @@
 #include <Eigen/Geometry>
 #include <chrono>
 
-
 const int RES_X = 32;
 const int RES_Y = 32;
 const int RES_Z = 32;
@@ -165,14 +164,12 @@ public:
         for (int i = 0; i < RES_X * RES_Y * RES_Z; i++) {
             int x, y, z;
             inverseIndex(i, x, y, z);
-            if (x == 0 || y == 0 || z == 0) {
+            if (y == 0 || y == RES_Y - 1) {
                 m_s[i] = 0.0f;
+            } else {
+                m_s[i] = 1.0f;
             }
         }
-
-        iterate([this](const int i, const int x, const int y, const int z) {
-            m_vv[i] = 0.0f;
-        });
     }
 
     void create_sphere_density() {
@@ -224,40 +221,6 @@ public:
         std::vector ss_vw(m_vw);
         std::vector ss_d(m_density);
 
-        // 2. make fluid incompressable (projection)
-        // TODO: why does this step not matter. Divergence always 0????????????????????????????
-
-        iterate([this, &ss_vv, &ss_vu, &ss_vw](const int i, const int x, const int y, const int z) {
-            int ixpp = index(x + 1, y, z);
-            int ixmm = index(x - 1, y, z);
-            int iypp = index(x, y + 1, z);
-            int iymm = index(x, y - 1, z);
-            int izpp = index(x, y, z + 1);
-            int izmm = index(x, y, z - 1);
-
-            // Gauss-Seidel method
-            float divergence = m_vu[i] - safeSample(m_vu, ixpp, m_vu[i]) +
-                               m_vv[i] - safeSample(m_vv, iypp, m_vv[i]) +
-                               m_vw[i] - safeSample(m_vw, izpp, m_vw[i]);
-
-            float s = m_s[ixpp] + m_s[ixmm] + m_s[iypp] + m_s[iymm] + m_s[izpp] + m_s[izmm];
-
-            if (divergence == 0) {
-                return;
-            }
-
-            std::cerr << divergence << '\n';
-
-            float p = divergence / s;
-
-            ss_vu[i] += m_s[ixmm] * p;
-            ss_vu[ixpp] -= m_s[ixpp] * p;
-            ss_vv[i] += m_s[iymm] * p;
-            ss_vv[iypp] -= m_s[iypp] * p;
-            ss_vw[i] += m_s[izmm] * p;
-            ss_vw[izpp] -= m_s[izpp] * p;
-        });
-
         // 3. Move the velocity field (advection)
         iterate([this, t_step, &ss_vv, &ss_vu, &ss_vw, &ss_d](const int i, const int x, const int y, const int z) {
             // semi-lagrangian
@@ -272,6 +235,67 @@ public:
             // Same backtracking based on the same velocities
             m_density[i] = std::min(sample_density(ss_d, ss_vu, ss_vv, ss_vw, x, y, z, t_step), 1.0f);
         });
+
+        // 2. make fluid incompressable (projection)
+        // TODO: why does this step not matter. Divergence always 0????????????????????????????
+
+        for(int i = 0; i < 5; i++) {
+            iterate([this](const int i, const int x, const int y, const int z) {
+
+                if(m_s[i] == 0) {
+                    return;
+                }
+
+                int ixpp = index(x + 1, y, z);
+                int ixmm = index(x - 1, y, z);
+                int iypp = index(x, y + 1, z);
+                int iymm = index(x, y - 1, z);
+                int izpp = index(x, y, z + 1);
+                int izmm = index(x, y, z - 1);
+
+                // Gauss-Seidel method
+                /*
+                float divergence = m_vu[i] - safeSample(m_vu, ixpp, m_vu[i]) +
+                                   m_vv[i] - safeSample(m_vv, iypp, m_vv[i]) +
+                                   m_vw[i] - safeSample(m_vw, izpp, m_vw[i]);
+                */
+
+                float divergence = 0.0f;
+                float sy = 1.0f;
+
+                if(m_vv[i] < 0.0f && m_s[index(x,y-1,z)] == 0) {
+                    // should remove flow downwards
+                    divergence += m_vv[i];
+                    m_vv[i] = 0.0f;
+                    sy = 0.0f;
+                }
+
+
+                divergence += m_vu[i] - safeSample(m_vu, ixpp, 0.0f) +
+                              m_vv[i] - safeSample(m_vv, iypp, 0.0f) +
+                              m_vw[i] - safeSample(m_vw, izpp, 0.0f);
+
+                if (divergence == 0) {
+                    return;
+                }
+
+                // TODO: this step looses energy
+
+                float s = m_s[ixpp] + m_s[ixmm] + m_s[iypp] + m_s[iymm] + m_s[izpp] + m_s[izmm];
+
+               // std::cerr << divergence << '\n';
+
+                float p = divergence / s;
+
+                m_vu[i] -= m_s[ixmm] * p;
+                m_vu[ixpp] += m_s[ixpp] * p;
+                m_vv[i] -= m_s[iymm] * p;
+                m_vv[iypp] += m_s[iypp] * p;
+                m_vw[i] -= m_s[izmm] * p;
+                m_vw[izpp] += m_s[izpp] * p;
+            });
+
+        }
     }
 
     void draw_velocity_field(Line &l, Line &l1, Line &l2) {
@@ -600,7 +624,7 @@ int main() {
         glBindVertexArray(VAO);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
-        // sim.draw_velocity_field(l, l1, l2);
+        sim.draw_velocity_field(l, l1, l2);
 
         auto endTime = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double, std::milli> elapsed = endTime - startTime;
