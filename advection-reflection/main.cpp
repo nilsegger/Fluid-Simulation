@@ -1,11 +1,12 @@
 #include <complex>
 #include <glad/glad.h>
-#include <GLFW/glfw3.h>
 #include <iostream>
 #include <vector>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <chrono>
+
+#include "Renderer.h"
 
 const int RES_X = 32;
 const int RES_Y = 32;
@@ -13,148 +14,6 @@ const int RES_Z = 32;
 
 const int WIDTH = 768;
 const int HEIGHT = 768;
-
-
-// Vertex shader source code
-const char *vertexShaderSource = R"(
-#version 330 core
-layout (location = 0) in vec2 aPos;
-void main() {
-    gl_Position = vec4(aPos, 0.0, 1.0);
-}
-)";
-
-// Fragment shader source code
-const char *fragmentShaderSource = R"(
-#version 330 core
-out vec4 FragColor;
-
-uniform vec3 resolution;
-uniform vec2 window;
-
-uniform sampler3D densityTexture;
-
-void main() {
-
-    vec2 scale = window / resolution.xy;
-
-    // Ray Marching into depth. This will only work because of the setup of the scene.
-    // There is no rotation and no perspective... Hence xy coords can be scaled to resolution xy and z as depth is simply res z
-    // Can probably still be optimised a lot by increasing step sizes, when nothing is hit
-
-    float maxDensity = 0.0f;
-    vec4 outputColor = vec4(0.0);
-    for(float t = 0.0; t <= resolution.z; t += 1.0) {
-
-        vec3 uv = vec3(gl_FragCoord.x / scale.x, gl_FragCoord.y / scale.y, t) / resolution;
-        float pointDensity = texture(densityTexture, uv).r;
-
-        vec4 sampleColor = vec4(vec3(0.5), pointDensity);
-
-        vec3 updatedColor = outputColor.rgb +  sampleColor.rgb * sampleColor.a * (1.0 -  outputColor.a);
-        float updatedAlpha = outputColor.a + sampleColor.a * (1.0 - outputColor.a);
-        outputColor = vec4(updatedColor, updatedAlpha);
-
-        if (outputColor.a > 0.99) break;
-    }
-
-    FragColor = outputColor; //vec4(maxDensity, maxDensity, maxDensity, 1.0); // RGB based on coordinates
-}
-)";
-
-void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
-    glViewport(0, 0, width, height);
-}
-
-
-class Line {
-    int shaderProgram;
-    unsigned int VBO, VAO;
-    std::vector<float> vertices;
-    Eigen::Vector3f startPoint;
-    Eigen::Vector3f endPoint;
-    Eigen::Matrix4f MVP;
-    Eigen::Vector3f lineColor;
-
-public:
-    Line(Eigen::Vector3f start, Eigen::Vector3f end) {
-        startPoint = start;
-        endPoint = end;
-        lineColor = Eigen::Vector3f(0.0f, 0.0f, 1.0f); // vec3(1,1,1);
-        //MVP = mat4(1.0f);
-
-        const char *vertexShaderSource = "#version 330 core\n"
-                "layout (location = 0) in vec3 aPos;\n"
-                "uniform mat4 MVP;\n"
-                "void main()\n"
-                "{\n"
-                "   gl_Position = MVP * vec4(aPos.x, aPos.y, aPos.z, 1.0);\n"
-                "}\0";
-        const char *fragmentShaderSource = "#version 330 core\n"
-                "out vec4 FragColor;\n"
-                "uniform vec3 color;\n"
-                "void main()\n"
-                "{\n"
-                "   FragColor = vec4(color, 1.0f);\n"
-                "}\n\0";
-
-        // vertex shader
-        int vertexShader = glCreateShader(GL_VERTEX_SHADER);
-        glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
-        glCompileShader(vertexShader);
-        // check for shader compile errors
-
-        // fragment shader
-        int fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-        glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
-        glCompileShader(fragmentShader);
-        // check for shader compile errors
-
-        // link shaders
-        shaderProgram = glCreateProgram();
-        glAttachShader(shaderProgram, vertexShader);
-        glAttachShader(shaderProgram, fragmentShader);
-        glLinkProgram(shaderProgram);
-        // check for linking errors
-
-        glDeleteShader(vertexShader);
-        glDeleteShader(fragmentShader);
-
-        vertices = {
-            start.x(), start.y(), start.z(),
-            end.x(), end.y(), end.z(),
-        };
-
-        glGenVertexArrays(1, &VAO);
-        glGenBuffers(1, &VBO);
-        glBindVertexArray(VAO);
-
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STATIC_DRAW);
-
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *) 0);
-        glEnableVertexAttribArray(0);
-
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindVertexArray(0);
-    }
-
-    void draw(Eigen::Matrix4Xf mvp, Eigen::Vector3f color) {
-        glUseProgram(shaderProgram);
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "MVP"), 1, GL_FALSE, mvp.data());
-        glUniform3fv(glGetUniformLocation(shaderProgram, "color"), 1, color.data());
-
-        glBindVertexArray(VAO);
-        glDrawArrays(GL_LINES, 0, 2);
-    }
-
-    ~Line() {
-        // TODO: this leads to seg fault?
-        // glDeleteVertexArrays(1, &VAO);
-        // glDeleteBuffers(1, &VBO);
-        // glDeleteProgram(shaderProgram);
-    }
-};
 
 class FluidSim {
 public:
@@ -185,28 +44,21 @@ public:
         });
     }
 
-    void bind_density(GLuint shaderProgram) {
-        GLuint textureID;
-        glGenTextures(1, &textureID);
-        glBindTexture(GL_TEXTURE_3D, textureID);
+    void sphere_influence(float t_step) {
+        iterate([this, t_step](const int i, const int x, const int y, const int z) {
+            float x1 = RES_X / 2.0f;
+            float y1 = RES_Y / 8.0f;
+            float z1 = RES_Z / 2.0f;
 
-        // Set texture parameters
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+            if(std::pow(x1 - x, 2.0f) + std::pow(y1 - y, 2.0f) + std::pow(z1 - z, 2.0f) <= 16) {
+                m_density[i] += 0.1 * t_step;
+                m_vv[i] += t_step * 64.0f;
+            }
+        });
+    }
 
-        // Upload data to the 3D texture
-        glTexImage3D(GL_TEXTURE_3D, 0, GL_RED, RES_X, RES_Y, RES_Z, 0, GL_RED, GL_FLOAT,
-                     m_density.data());
-
-        glBindTexture(GL_TEXTURE_3D, 0);
-
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_3D, textureID);
-        // Set the sampler3D uniform to use texture unit 0
-        glUniform1i(glGetUniformLocation(shaderProgram, "densityTexture"), 0);
+    const std::vector<float>& get_density() {
+        return m_density;
     }
 
     void update(float t_step) {
@@ -239,7 +91,7 @@ public:
         // 2. make fluid incompressable (projection)
         // TODO: why does this step not matter. Divergence always 0????????????????????????????
 
-        for(int i = 0; i < 5; i++) {
+        for(int i = 0; i < 100; i++) {
             iterate([this](const int i, const int x, const int y, const int z) {
 
                 if(m_s[i] == 0) {
@@ -261,15 +113,6 @@ public:
                 */
 
                 float divergence = 0.0f;
-                float sy = 1.0f;
-
-                if(m_vv[i] < 0.0f && m_s[index(x,y-1,z)] == 0) {
-                    // should remove flow downwards
-                    divergence += m_vv[i];
-                    m_vv[i] = 0.0f;
-                    sy = 0.0f;
-                }
-
 
                 divergence += m_vu[i] - safeSample(m_vu, ixpp, 0.0f) +
                               m_vv[i] - safeSample(m_vv, iypp, 0.0f) +
@@ -278,8 +121,6 @@ public:
                 if (divergence == 0) {
                     return;
                 }
-
-                // TODO: this step looses energy
 
                 float s = m_s[ixpp] + m_s[ixmm] + m_s[iypp] + m_s[iymm] + m_s[izpp] + m_s[izmm];
 
@@ -416,9 +257,9 @@ private:
         }
 
         // Move back
-        float nu = static_cast<float>(x) + vx;
-        float nv = static_cast<float>(x) + vy;
-        float nw = static_cast<float>(x) + vz;
+        float nu = static_cast<float>(x) - vx;
+        float nv = static_cast<float>(x) - vy;
+        float nw = static_cast<float>(x) - vz;
 
         switch (direction) {
             case X: return interpolate(nu, nv, nw, ss_vu);
@@ -441,9 +282,9 @@ private:
 
 
         // Move back, lands within 4 cells origins -> interpolate
-        float nx = static_cast<float>(x) - vx;
-        float ny = static_cast<float>(y) - vy;
-        float nz = static_cast<float>(z) - vz;
+        float nx = static_cast<float>(x) + vx;
+        float ny = static_cast<float>(y) + vy;
+        float nz = static_cast<float>(z) + vz;
 
         return interpolate(nx, ny, nz, density);
     }
@@ -518,80 +359,13 @@ private:
 int main() {
     std::ios_base::sync_with_stdio(false);
 
-    // Initialize GLFW
-    if (!glfwInit()) {
-        std::cerr << "Failed to initialize GLFW" << std::endl;
+    Renderer renderer;
+    if(renderer.open(WIDTH, HEIGHT) == -1) {
         return -1;
-    }
-
-    // Create a GLFW window
-    GLFWwindow *window = glfwCreateWindow(WIDTH, HEIGHT, "Quad Example", nullptr, nullptr);
-    if (!window) {
-        std::cerr << "Failed to create GLFW window" << std::endl;
-        glfwTerminate();
-        return -1;
-    }
-    glfwMakeContextCurrent(window);
-    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
-
-    // Load GLAD
-    if (!gladLoadGLLoader((GLADloadproc) glfwGetProcAddress)) {
-        std::cerr << "Failed to initialize GLAD" << std::endl;
-        return -1;
-    }
-
-    // Build and compile the shader program
-    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
-    glCompileShader(vertexShader);
-
-    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
-    glCompileShader(fragmentShader);
-
-    GLuint shaderProgram = glCreateProgram();
-    glAttachShader(shaderProgram, vertexShader);
-    glAttachShader(shaderProgram, fragmentShader);
-    glLinkProgram(shaderProgram);
-
-    // Delete the shaders as they're linked into the program now
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-
-    // Set up vertex data and buffers
-    float vertices[] = {
-        -1.0f, -1.0f, // Bottom left
-        1.0f, -1.0f, // Bottom right
-        1.0f, 1.0f, // Top right
-        -1.0f, 1.0f // Top left
     };
-
-    unsigned int indices[] = {
-        0, 1, 2, // First triangle
-        0, 2, 3 // Second triangle
-    };
-
-    GLuint VAO, VBO, EBO;
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
-    glGenBuffers(1, &EBO);
-
-    glBindVertexArray(VAO);
-
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *) 0);
-    glEnableVertexAttribArray(0);
-
-    glBindBuffer(GL_ARRAY_BUFFER, 0); // Unbind VBO
-    glBindVertexArray(0); // Unbind VAO
 
     FluidSim sim;
-    sim.create_sphere_density();
+    // sim.create_sphere_density();
 
     Line l(Eigen::Vector3f(0.0f, 0.0f, 0.0f), Eigen::Vector3f(1.0f, 0.0f, 0.0f));
     Line l1(Eigen::Vector3f(1.0f, 0.0f, 0.0f), Eigen::Vector3f(.6f, 0.2f, 0.0f));
@@ -600,31 +374,19 @@ int main() {
     double deltaTime = 0.0;
 
     // Render loop
-    while (!glfwWindowShouldClose(window)) {
+    while (!renderer.windowHasBeenClosed()) {
         auto startTime = std::chrono::high_resolution_clock::now();
-        // Input
-        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-            glfwSetWindowShouldClose(window, true);
 
+        sim.sphere_influence(deltaTime / 1000.0f);
         sim.update(std::min(deltaTime / 1000.0f, 1.0 / 30.0));
 
-        // Render
-        glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        renderer.clear_frame();
 
-        GLint windowLocation = glGetUniformLocation(shaderProgram, "window");
-        glUniform2f(windowLocation, WIDTH, HEIGHT);
+        renderer.bind_fluid_shader_data(WIDTH, HEIGHT, RES_X, RES_Y, RES_Z, sim.get_density());
 
-        glUniform3f(glGetUniformLocation(shaderProgram, "resolution"), RES_X, RES_Y, RES_Z);
+        renderer.draw_fluid_quad();
 
-        sim.bind_density(shaderProgram);
-
-        // Draw the quad
-        glUseProgram(shaderProgram);
-        glBindVertexArray(VAO);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-
-        sim.draw_velocity_field(l, l1, l2);
+        // sim.draw_velocity_field(l, l1, l2);
 
         auto endTime = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double, std::milli> elapsed = endTime - startTime;
@@ -633,20 +395,9 @@ int main() {
         // Print or log the frame time in milliseconds
         if (deltaTime / 1000.f > 1.0 / 30.0) std::cerr << "Simulation lagging behind.\n";
         std::cout << "Frame time: " << deltaTime << " ms." << std::endl;
-
-
-        // Swap buffers and poll events
-        glfwSwapBuffers(window);
-        glfwPollEvents();
     }
 
     // Clean up
-    glDeleteVertexArrays(1, &VAO);
-    glDeleteBuffers(1, &VBO);
-    glDeleteBuffers(1, &EBO);
-    glDeleteProgram(shaderProgram);
-
-    glfwDestroyWindow(window);
-    glfwTerminate();
+    renderer.close();
     return 0;
 }
