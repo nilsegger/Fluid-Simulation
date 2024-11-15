@@ -202,11 +202,13 @@ public:
         glClear(GL_COLOR_BUFFER_BIT);
     }
 
-    void bind_fluid_shader_data(const int width, const int height, const int resx, const int resy, const int resz, const std::vector<float>& data) {
+    void bind_fluid_shader_data(const int width, const int height, const int resx, const int resy, const int resz, const std::vector<float>& data, float depth) {
         GLint windowLocation = glGetUniformLocation(shaderProgram, "window");
         glUniform2f(windowLocation, width, height);
 
         glUniform3f(glGetUniformLocation(shaderProgram, "resolution"), resx, resy, resz);
+
+        glUniform1f(glGetUniformLocation(shaderProgram, "depth"), depth);
 
         GLuint textureID;
         glGenTextures(1, &textureID);
@@ -323,6 +325,7 @@ out vec4 FragColor;
 
 uniform vec3 resolution;
 uniform vec2 window;
+uniform float depth;
 
 uniform sampler3D densityTexture;
 
@@ -336,7 +339,7 @@ void main() {
 
     float maxDensity = 0.0f;
     vec4 outputColor = vec4(0.0);
-    for(float t = 0.0; t <= resolution.z; t += 1.0) {
+    for(float t = depth; t <= resolution.z; t += 1.0) {
 
         vec3 uv = vec3(gl_FragCoord.x / scale.x, gl_FragCoord.y / scale.y, t) / resolution;
         float pointDensity = texture(densityTexture, uv).r;

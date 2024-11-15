@@ -8,9 +8,9 @@
 
 #include "Renderer.h"
 
-const int RES_X = 16;
-const int RES_Y = 16;
-const int RES_Z = 16;
+const int RES_X = 64;
+const int RES_Y = 64;
+const int RES_Z = 64;
 
 const int WIDTH = 768;
 const int HEIGHT = 768;
@@ -53,19 +53,22 @@ public:
         });
     }
 
-    void sphere_influence(float t_step) {
-        return;
-        iterate([this, t_step](const int i, const int x, const int y, const int z) {
-            float x1 = RES_X / 2.0f;
-            float y1 = RES_Y / 8.0f;
-            float z1 = RES_Z / 2.0f;
+    void sphere_influence(const float radius) {
+        iterate([this, &radius](const int i, const int x, const int y, const int z) {
+            const float x_centered = x - (RES_X / 2.0f);
+            const float y_centered = y - radius;
+            const float z_centered = z - (RES_Z / 2.0f);
 
-            if (std::pow(x1 - x, 2.0f) + std::pow(y1 - y, 2.0f) + std::pow(z1 - z, 2.0f) <= 16) {
-                m_density[i] += 0.1 * t_step;
-                m_vv[i] += t_step * 64.0f;
+            const float distance = std::pow(x_centered, 2.0f) + std::pow(y_centered, 2.0f) + std::pow(z_centered, 2.0f);
+            if (distance < std::pow(radius, 2.0f)) {
+                const float w = 1.0f - (distance / std::pow(radius, 2.0f));
+                m_s[i] = CellType::StaticFluid;
+                m_density[i] = w;
+                m_vv[i] = 5.0f * w;
             }
         });
     }
+
 
     void bottom_influence() {
         iterate([this](const int i, const int x, const int y, const int z) {
@@ -73,11 +76,10 @@ public:
             m_vv[i] = (1.0f - (static_cast<float>(y) / static_cast<float>(RES_Y))) * 1.0f;
             m_vw[i] = (1.0f - (static_cast<float>(z) / static_cast<float>(RES_Z))) * 1.0f;
 
-            /*
-            if(x == 1 || y == 1 || z == 1 ) {
+
+            if (x == 1 || y == 1 || z == 1) {
                 m_s[i] = CellType::StaticFluid;
             }
-            */
         });
     }
 
@@ -98,28 +100,27 @@ public:
         // Great video https://www.youtube.com/watch?v=iKAVRgIrUOU
         // 1. Modify velocity values (e.g. gravity)
 
-
+        /*
         iterate([t_step, this](const int i, const int x, const int y, const int z) {
             if (m_s[i] == CellType::Fluid) {
-                //m_vv[i] -= t_step * 9.81; // m_vv[i] //+ (t_step * -9.81f);
+                m_vv[i] -= t_step * 0.981; // m_vv[i] //+ (t_step * -9.81f);
             }
-
-            // if(y == 1) m_vv[i] = 0.5f;
-            // if(x == 1) m_vu[i] = 0.5f;
         });
+        */
 
 
         // 2. make fluid incompressable (projection)
         float change = gauss_seidel_projection();
         int iter = 1;
-        while(change > 1.0f || iter > 1000) {
+        while (change > 1.0f || iter > 1000) {
             iter++;
             change = gauss_seidel_projection();
         }
-        if(iter > 10 && iter < 1000) {
+        if (iter > 10 && iter < 1000) {
             std::cerr << "Required " << iter << " to converge to < 1.0f change." << std::endl;
-        } else if(iter == 1000) {
-            std::cerr << "Failed to converge gauss seidel within 1000 iterations. Remaining change " << change << std::endl;
+        } else if (iter == 1000) {
+            std::cerr << "Failed to converge gauss seidel within 1000 iterations. Remaining change " << change <<
+                    std::endl;
         }
 
         semi_lagrange(t_step);
@@ -167,7 +168,7 @@ public:
                 Eigen::Affine>::Identity();
 
             transform_y.translate(Eigen::Vector3f(uv_x, uv_y, uv_z));
-            if(direction.x() != 1.0f) {
+            if (direction.x() != 1.0f) {
                 transform_y.rotate(rotation);
             }
             transform_y.scale(max_w / max_norm * norm);
@@ -183,7 +184,6 @@ public:
     }
 
     float gauss_seidel_projection() {
-
         const std::vector ss_vv(m_vv);
         const std::vector ss_vu(m_vu);
         const std::vector ss_vw(m_vw);
@@ -239,28 +239,28 @@ public:
             if (m_s[i] == Fluid) {
                 float dx = ss_vu[i];
                 float dy = (ss_vv[i] + ss_vv[index(x - 1, y, z)] + ss_vv[index(x, y + 1, z)] + ss_vv[index(
-                                      x - 1, y + 1, z)]) / 4.0f;
+                                x - 1, y + 1, z)]) / 4.0f;
                 float dz = (ss_vw[i] + ss_vw[index(x - 1, y, z)] + ss_vw[index(x, y, z + 1)] + ss_vw[index(
-                                      x - 1, y, z + 1)]) / 4.0f;
+                                x - 1, y, z + 1)]) / 4.0f;
                 m_vu[i] = sample(x, y, z, dx, dy, dz, t_step, ss_vu);
 
 
                 dx = (ss_vu[i] + ss_vu[index(x, y - 1, z)] + ss_vu[index(x + 1, y, z)] + ss_vu[index(
-                                      x + 1, y - 1, z)]) / 4.0f;
+                          x + 1, y - 1, z)]) / 4.0f;
                 dy = ss_vv[i];
                 dz = (ss_vw[i] + ss_vw[index(x, y - 1, z)] + ss_vw[index(x, y, z + 1)] + ss_vw[index(
-                                      x, y - 1, z + 1)]) / 4.0f;
+                          x, y - 1, z + 1)]) / 4.0f;
                 m_vv[i] = sample(x, y, z, dx, dy, dz, t_step, ss_vv);
 
                 dx = (ss_vu[i] + ss_vu[index(x, y, z - 1)] + ss_vu[index(x + 1, y, z)] + ss_vu[index(
-                                      x + 1, y, z - 1)]) / 4.0f;
+                          x + 1, y, z - 1)]) / 4.0f;
                 dy = (ss_vv[i] + ss_vv[index(x, y, z - 1)] + ss_vv[index(x, y + 1, z)] + ss_vv[index(
-                                                      x, y + 1, z - 1)]) / 4.0f;
+                          x, y + 1, z - 1)]) / 4.0f;
                 dz = ss_vw[i];
                 m_vw[i] = sample(x, y, z, dx, dy, dz, t_step, ss_vw);
             }
 
-            if(m_s[i] != Object) {
+            if (m_s[i] != Object) {
                 float u = (m_vu[i] + m_vu[index(x + 1, y, z)]) / 2.0f;
                 float v = (m_vv[i] + m_vv[index(x, y + 1, z)]) / 2.0f;
                 float w = (m_vw[i] + m_vw[index(x, y, z + 1)]) / 2.0f;
@@ -437,8 +437,8 @@ int main() {
             std::endl;
 
     FluidSim sim;
-    sim.create_sphere_density();
-    sim.bottom_influence();
+    // sim.create_sphere_density();
+    sim.sphere_influence(RES_X / 10.0f);
 
     Line l(Eigen::Vector3f(0.0f, 0.0f, 0.0f), Eigen::Vector3f(1.0f, 0.0f, 0.0f));
     Line l1(Eigen::Vector3f(1.0f, 0.0f, 0.0f), Eigen::Vector3f(.6f, 0.2f, 0.0f));
@@ -460,8 +460,14 @@ int main() {
 
         if (renderer.pPressed()) step_only = !step_only;
 
-        if (renderer.upPressed()) fieldRenderDepth++;
-        if (renderer.downPressed()) fieldRenderDepth--;
+        if (renderer.upPressed()) {
+            fieldRenderDepth++;
+            std::cout << "Rendering layer " << fieldRenderDepth << std::endl;
+        };
+        if (renderer.downPressed()) {
+            fieldRenderDepth--;
+            std::cout << "Rendering layer " << fieldRenderDepth << std::endl;
+        }
 
         if (renderer.rPressed()) {
             sim.clear();
@@ -476,10 +482,9 @@ int main() {
         if (!step_only || renderer.sPressed()) {
             sim.update(1.0 / 30.0);
 
-            std::cout << "Rendering layer " << fieldRenderDepth << '\n';
             // Print or log the frame time in milliseconds
             if (deltaTime / 1000.f > 1.0 / 30.0) std::cerr << "Simulation lagging behind.\n";
-            std::cout << "Frame time: " << deltaTime << " ms." << std::endl;
+            // std::cout << "Frame time: " << deltaTime << " ms." << std::endl;
         }
 
         if (renderer.Pressed1()) {
@@ -494,7 +499,7 @@ int main() {
         renderer.clear_frame();
 
         if (renderFluid)
-            renderer.bind_fluid_shader_data(WIDTH, HEIGHT, RES_X, RES_Y, RES_Z, sim.get_density());
+            renderer.bind_fluid_shader_data(WIDTH, HEIGHT, RES_X, RES_Y, RES_Z, sim.get_density(), fieldRenderDepth);
         else {
             sim.draw_velocity_field(l, l1, l2, l3, l4, fieldRenderDepth);
         }
