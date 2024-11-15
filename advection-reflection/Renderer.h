@@ -229,15 +229,14 @@ public:
         glBindTexture(GL_TEXTURE_3D, textureID);
         // Set the sampler3D uniform to use texture unit 0
         glUniform1i(glGetUniformLocation(shaderProgram, "densityTexture"), 0);
-    }
 
-    void draw_fluid_quad() {
         // Draw the quad
         glUseProgram(shaderProgram);
         glBindVertexArray(VAO);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    }
 
-
+    void draw() {
         // Swap buffers and poll events
         glfwSwapBuffers(window);
         glfwPollEvents();
@@ -247,10 +246,66 @@ public:
         return glfwWindowShouldClose(window);
     }
 
+    bool checkSpaceKeyReleased() {
+        int currentSpaceState = glfwGetKey(window, GLFW_KEY_SPACE);
+        bool released = (wasSpacePressed && currentSpaceState == GLFW_RELEASE);
+        wasSpacePressed = (currentSpaceState == GLFW_PRESS);
+        return released;
+    }
+
+    bool checkKey(const int key, bool& boolean) {
+        int currentSpaceState = glfwGetKey(window, key);
+        bool released = (boolean && currentSpaceState == GLFW_RELEASE);
+        boolean = (currentSpaceState == GLFW_PRESS);
+        return released;
+    }
+
+    bool upPressed() {
+        return checkKey(GLFW_KEY_UP, keyUpPressed);
+    }
+
+    bool downPressed() {
+        return checkKey(GLFW_KEY_DOWN, keyDownPressed);
+    }
+
+    bool pPressed() {
+        return checkKey(GLFW_KEY_P, keypPressed);
+    }
+
+    bool sPressed() {
+        return checkKey(GLFW_KEY_S, keysPressed);
+    }
+
+    bool rPressed() {
+        return checkKey(GLFW_KEY_R, keysRPressed);
+    }
+
+    bool Pressed1() {
+        return checkKey(GLFW_KEY_1, keys1Pressed);
+    }
+
+    bool Pressed2() {
+        return checkKey(GLFW_KEY_2, keys2Pressed);
+    }
+
+    bool Pressed3() {
+        return checkKey(GLFW_KEY_3, keys3Pressed);
+    }
+
 private:
 
     GLFWwindow *window = nullptr;
     GLuint VAO, VBO, EBO, shaderProgram;
+
+    bool wasSpacePressed = false;
+    bool keyUpPressed = false;
+    bool keysRPressed = false;
+    bool keyDownPressed = false;
+    bool keypPressed = false;
+    bool keysPressed = false;
+    bool keys1Pressed = false;
+    bool keys2Pressed = false;
+    bool keys3Pressed = false;
 
     // Vertex shader source code
     const char *vertexShaderSource = R"(

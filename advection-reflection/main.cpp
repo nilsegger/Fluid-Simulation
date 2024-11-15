@@ -8,26 +8,36 @@
 
 #include "Renderer.h"
 
-const int RES_X = 32;
-const int RES_Y = 32;
-const int RES_Z = 32;
+const int RES_X = 16;
+const int RES_Y = 16;
+const int RES_Z = 16;
 
 const int WIDTH = 768;
 const int HEIGHT = 768;
 
+const float DX = 1.0f;
+const float DY = 1.0f;
+const float DZ = 1.0f;
+
 class FluidSim {
 public:
     FluidSim(): m_vu(RES_X * RES_Y * RES_Z, 0.0f), m_vv(RES_X * RES_Y * RES_Z, 0.0f),
-                m_vw(RES_X * RES_Y * RES_Z, 0.0f), m_s(RES_X * RES_Y * RES_Z, 1.0f),
-                m_density(RES_X * RES_Y * RES_Z, 0.0) {
+                m_vw(RES_X * RES_Y * RES_Z, 0.0f), m_s(RES_X * RES_Y * RES_Z, CellType::Fluid),
+                m_density(RES_X * RES_Y * RES_Z, 0.0), m_pressure(RES_X * RES_Y * RES_Z, 0.0f) {
         for (int i = 0; i < RES_X * RES_Y * RES_Z; i++) {
-            int x, y, z;
-            inverseIndex(i, x, y, z);
-            if (y == 0 || y == RES_Y - 1) {
-                m_s[i] = 0.0f;
+            if (isBoundary(i)) {
+                m_s[i] = CellType::Object;
             } else {
-                m_s[i] = 1.0f;
+                m_s[i] = CellType::Fluid;
             }
+
+            int x,y,z;
+            inverseIndex(i ,x, y, z);
+
+            if(index(x,y,z) != i) {
+                std::cerr << "index error" << std::endl;
+            }
+
         }
     }
 
@@ -36,8 +46,8 @@ public:
             int xx = x - RES_X / 2;
             int yy = y - RES_Y / 2;
             int zz = z - RES_Z / 2;
-            if (xx * xx + yy * yy + zz * zz < 16 * 16) {
-                m_density[i] = float(16 * 16 - (xx * xx + yy * yy + zz * zz)) / float(16 * 16) * 0.1;
+            if (xx * xx + yy * yy + zz * zz < 8 * 8) {
+                m_density[i] = float(8 * 8 - (xx * xx + yy * yy + zz * zz)) / float(8 * 8) * 0.1;
             } else {
                 m_density[i] = 0.0;
             }
@@ -50,156 +60,226 @@ public:
             float y1 = RES_Y / 8.0f;
             float z1 = RES_Z / 2.0f;
 
-            if(std::pow(x1 - x, 2.0f) + std::pow(y1 - y, 2.0f) + std::pow(z1 - z, 2.0f) <= 16) {
+            if (std::pow(x1 - x, 2.0f) + std::pow(y1 - y, 2.0f) + std::pow(z1 - z, 2.0f) <= 16) {
                 m_density[i] += 0.1 * t_step;
                 m_vv[i] += t_step * 64.0f;
             }
         });
     }
 
-    const std::vector<float>& get_density() {
+    void bottom_influence() {
+        iterate([this](const int i, const int x, const int y, const int z) {
+            if (y == 1) {
+                m_vv[i] = 0.5f;
+                m_s[i] = CellType::StaticFluid;
+            }
+
+            if(y == RES_Y - 2) {
+                m_vv[i] = -0.5f;
+                m_s[i] = CellType::StaticFluid;
+            }
+        });
+    }
+
+    void clear() {
+        iterate([this](const int i, const int x, const int y, const int z) {
+           m_vu[i] = 0.0f;
+           m_vv[i] = 0.0f;
+           m_vw[i] = 0.0f;
+            m_density[i] = 0.0f;
+        });
+    }
+
+    const std::vector<float> &get_density() {
         return m_density;
     }
 
     void update(float t_step) {
         // Great video https://www.youtube.com/watch?v=iKAVRgIrUOU
         // 1. Modify velocity values (e.g. gravity)
+
+
         iterate([t_step, this](const int i, const int x, const int y, const int z) {
-            m_vv[i] = m_vv[i] + (t_step * -9.81f);
+
+            if(m_s[i] == CellType::Fluid) {
+                //m_vv[i] -= t_step * 9.81; // m_vv[i] //+ (t_step * -9.81f);
+            }
+
+            // if(y == 1) m_vv[i] = 0.5f;
+            // if(x == 1) m_vu[i] = 0.5f;
         });
 
+
+        // 2. make fluid incompressable (projection)
+        for (int i = 0; i < 10; i++) {
+             gauss_seidel_projection();
+        }
+
+        std::cerr << "Average Divergence: " << avgDivergence() / (RES_X * RES_Y * RES_Z) << '\n';
+
+        semi_lagrange(t_step);
+    }
+
+    void draw_velocity_field(Line &l, Line &l1, Line &l2, Line &l3, Line &l4, const int depth) {
+        float max_norm = 0.00001f;
+
+        iterate([this, &depth, &max_norm](const int i, const int x, const int y, const int z) {
+            if (z != depth) return;
+            float u = (m_vu[i] + m_vu[index(x + 1, y, z)]) / 2.0f;
+            float v = (m_vv[i] + m_vv[index(x, y + 1, z)]) / 2.0f;
+            float w = (m_vw[i] + m_vw[index(x, y, z + 1)]) / 2.0f;
+            Eigen::Vector3f direction(u, v, w);
+            float norm = direction.norm();
+            max_norm = std::max(norm, max_norm);
+        });
+
+        iterate([this, &l, &l1, &l2, &l3, &l4, &depth, &max_norm](const int i, const int x, const int y, const int z) {
+            if (z != depth) return;
+
+            float max_w = 0.8f / RES_X;
+
+            float u = (m_vu[i] + m_vu[index(x + 1, y, z)]) / 2.0f;
+            float v = (m_vv[i] + m_vv[index(x, y + 1, z)]) / 2.0f;
+            float w = (m_vw[i] + m_vw[index(x, y, z + 1)]) / 2.0f;
+
+            float uv_x = (float(x) / float(RES_X) - 0.5f) * 2.0f + (0.5f * max_w);
+            float uv_y = (float(y) / float(RES_Y) - 0.5f) * 2.0f + (0.5f * max_w);
+            float uv_z = 0.0f; // (float(z) / float(RES_Z)) * 2.0f;
+
+            Eigen::Vector3f x_axis(1.0f, 0, 0.0f);
+            Eigen::Vector3f direction(u, v, w);
+            float norm = direction.norm();
+
+            if (norm == 0.0f) return;
+
+            direction.normalize();
+            Eigen::Vector3f axis = x_axis.cross(direction);
+            double angle = std::acos(x_axis.dot(direction));
+            axis.normalize();
+            Eigen::AngleAxisf rotation(angle, axis);
+
+            Eigen::Transform<float, 3, Eigen::Affine> transform_y = Eigen::Transform<float, 3,
+                Eigen::Affine>::Identity();
+
+            transform_y.translate(Eigen::Vector3f(uv_x, uv_y, uv_z));
+            transform_y.rotate(rotation);
+            transform_y.scale(max_w / max_norm * norm);
+
+            //float sy = std::copysign(std::min(std::abs(m_vv[i] * max_h), max_h), m_vv[i]);
+
+            l.draw(transform_y.matrix(), Eigen::Vector3f(0.0f, 0.0f, 1.0f));
+            l1.draw(transform_y.matrix(), Eigen::Vector3f(0.0f, 1.0f, 0.0f));
+            l2.draw(transform_y.matrix(), Eigen::Vector3f(0.0f, 1.0f, 0.0f));
+            l3.draw(transform_y.matrix(), Eigen::Vector3f(1.0f, 0.0f, 0.0f));
+            l4.draw(transform_y.matrix(), Eigen::Vector3f(1.0f, 0.0f, 0.0f));
+        });
+    }
+
+    void gauss_seidel_projection() {
+        iterate([this](const int i, const int x, const int y, const int z) {
+            if (m_s[i] == CellType::Object) return;
+
+            int ixpp = index(x + 1, y, z);
+            int ixmm = index(x - 1, y, z);
+            int iypp = index(x, y + 1, z);
+            int iymm = index(x, y - 1, z);
+            int izpp = index(x, y, z + 1);
+            int izmm = index(x, y, z - 1);
+
+            // Gauss-Seidel method
+
+            float s = 0.0f;
+            if(m_s[ixpp] == CellType::Fluid) s++;
+            if(m_s[ixmm] == CellType::Fluid) s++;
+            if(m_s[iypp] == CellType::Fluid) s++;
+            if(m_s[iymm] == CellType::Fluid) s++;
+            if(m_s[izpp] == CellType::Fluid) s++;
+            if(m_s[izmm] == CellType::Fluid) s++;
+
+            float divergence = (m_vu[ixpp] - m_vu[i]) / DX +
+                               (m_vv[iypp] - m_vv[i]) / DY +
+                               (m_vw[izpp] - m_vw[i]) / DZ;
+            float dd = divergence / s;
+
+            if (m_s[ixmm] == CellType::Fluid && m_s[i] == CellType::Fluid) m_vu[i] += dd;
+            if (m_s[ixpp] == CellType::Fluid) m_vu[ixpp] -= dd;
+            if (m_s[iymm] == CellType::Fluid && m_s[i] == CellType::Fluid) m_vv[i] += dd;
+            if (m_s[iypp] == CellType::Fluid) m_vv[iypp] -= dd;
+            if (m_s[izmm] == CellType::Fluid && m_s[i] == CellType::Fluid) m_vw[i] += dd;
+            if (m_s[izpp] == CellType::Fluid) m_vw[izpp] -= dd;
+        });
+    }
+
+    void semi_lagrange(const float t_step) {
         std::vector ss_vv(m_vv);
         std::vector ss_vu(m_vu);
         std::vector ss_vw(m_vw);
         std::vector ss_d(m_density);
 
-        // 3. Move the velocity field (advection)
-        iterate([this, t_step, &ss_vv, &ss_vu, &ss_vw, &ss_d](const int i, const int x, const int y, const int z) {
-            // semi-lagrangian
+        iterate([this, &ss_vv, &ss_vw, &ss_vu, &ss_d, &t_step](const int i, const int x, const int y, const int z) {
 
-            // TODO: check for obstacles
-
-            // Backtrack, find out where "particles" come from
             m_vu[i] = sample(ss_vu, ss_vv, ss_vw, i, x, y, z, SampleDirection::X, t_step);
             m_vv[i] = sample(ss_vu, ss_vv, ss_vw, i, x, y, z, SampleDirection::Y, t_step);
             m_vw[i] = sample(ss_vu, ss_vv, ss_vw, i, x, y, z, SampleDirection::Z, t_step);
 
             // Same backtracking based on the same velocities
-            m_density[i] = std::min(sample_density(ss_d, ss_vu, ss_vv, ss_vw, x, y, z, t_step), 1.0f);
+            //m_density[i] = sample_density(ss_d, ss_vu, ss_vv, ss_vw, x, y, z, t_step);
+
         });
-
-        // 2. make fluid incompressable (projection)
-        // TODO: why does this step not matter. Divergence always 0????????????????????????????
-
-        for(int i = 0; i < 100; i++) {
-            iterate([this](const int i, const int x, const int y, const int z) {
-
-                if(m_s[i] == 0) {
-                    return;
-                }
-
-                int ixpp = index(x + 1, y, z);
-                int ixmm = index(x - 1, y, z);
-                int iypp = index(x, y + 1, z);
-                int iymm = index(x, y - 1, z);
-                int izpp = index(x, y, z + 1);
-                int izmm = index(x, y, z - 1);
-
-                // Gauss-Seidel method
-                /*
-                float divergence = m_vu[i] - safeSample(m_vu, ixpp, m_vu[i]) +
-                                   m_vv[i] - safeSample(m_vv, iypp, m_vv[i]) +
-                                   m_vw[i] - safeSample(m_vw, izpp, m_vw[i]);
-                */
-
-                float divergence = 0.0f;
-
-                divergence += m_vu[i] - safeSample(m_vu, ixpp, 0.0f) +
-                              m_vv[i] - safeSample(m_vv, iypp, 0.0f) +
-                              m_vw[i] - safeSample(m_vw, izpp, 0.0f);
-
-                if (divergence == 0) {
-                    return;
-                }
-
-                float s = m_s[ixpp] + m_s[ixmm] + m_s[iypp] + m_s[iymm] + m_s[izpp] + m_s[izmm];
-
-               // std::cerr << divergence << '\n';
-
-                float p = divergence / s;
-
-                m_vu[i] -= m_s[ixmm] * p;
-                m_vu[ixpp] += m_s[ixpp] * p;
-                m_vv[i] -= m_s[iymm] * p;
-                m_vv[iypp] += m_s[iypp] * p;
-                m_vw[i] -= m_s[izmm] * p;
-                m_vw[izpp] += m_s[izpp] * p;
-            });
-
-        }
     }
 
-    void draw_velocity_field(Line &l, Line &l1, Line &l2) {
-        iterate([this, &l, &l1, &l2](const int i, const int x, const int y, const int z) {
-            if (z != 1) return;
-
-            float max_w = 0.8f / RES_X;
-            float max_h = .8f / RES_Y;
-
-            float uv_x = (float(x) / float(RES_X) - 0.5f) * 2.0f;
-            float uv_y = (float(y) / float(RES_Y) - 0.5f) * 2.0f;
-            float uv_z = (float(z) / float(RES_Z)) * 2.0f;
-
-            Eigen::Transform<float, 3, Eigen::Affine> transform_x = Eigen::Transform<float, 3,
-                Eigen::Affine>::Identity();
-            float sx = std::copysign(std::min(std::abs(m_vu[i] * max_w), max_w), m_vu[i]);
-            transform_x.translate(Eigen::Vector3f(uv_x, uv_y + (.5f / RES_Y), uv_z));
-            transform_x.scale(sx);
-            l.draw(transform_x.matrix(), Eigen::Vector3f(1.0f, 0.0f, 0.0f));
-            l1.draw(transform_x.matrix(), Eigen::Vector3f(1.0f, 0.0f, 0.0f));
-            l2.draw(transform_x.matrix(), Eigen::Vector3f(1.0f, 0.0f, 0.0f));
-
-            Eigen::Transform<float, 3, Eigen::Affine> transform_y = Eigen::Transform<float, 3,
-                Eigen::Affine>::Identity();
-            float sy = std::copysign(std::min(std::abs(m_vv[i] * max_h), max_h), m_vv[i]);
-            transform_y.translate(Eigen::Vector3f(uv_x + (.5f / RES_X), uv_y, uv_z));
-            transform_y.scale(sy);
-            float angle = 90.0f * M_PI / 180.0f; // Convert degrees to radians
-            transform_y.rotate(Eigen::AngleAxisf(angle, Eigen::Vector3f::UnitZ()));
-            l.draw(transform_y.matrix(), Eigen::Vector3f(0.0f, 1.0f, 0.0f));
-            l1.draw(transform_y.matrix(), Eigen::Vector3f(0.0f, 1.0f, 0.0f));
-            l2.draw(transform_y.matrix(), Eigen::Vector3f(0.0f, 1.0f, 0.0f));
+    float avgDivergence() {
+        float div = 0.0f;
+        float count = 0.0f;
+        iterate([this, &div, &count](const int i, const int x, const int y, const int z) {
+            if(m_s[i] == CellType::Fluid) { // Only count non static fields
+                int ixpp = index(x + 1, y, z);
+                int iypp = index(x, y + 1, z);
+                int izpp = index(x, y, z + 1);
+                float divergence = (m_vu[ixpp] - m_vu[i]) / DX +
+                                   (m_vv[iypp] - m_vv[i]) / DY +
+                                   (m_vw[izpp] - m_vw[i]) / DZ;
+                div += divergence;
+                count++;
+            }
         });
+        return div / count;
     }
 
 private:
+
+    enum CellType {
+        Fluid,
+        Object,
+        StaticFluid // Source / Sink?
+    };
+
     // Should be represeneted as a staggered grid. velocity vectors are not in the center of the cell
     // https://www.researchgate.net/profile/Ke-Qing-Xia/publication/325053508/figure/fig1/AS:625094766370816@1526045614156/Schematic-of-the-staggered-grid_W640.jpg
     std::vector<float> m_vu;
     std::vector<float> m_vv;
     std::vector<float> m_vw;
+    std::vector<float> m_pressure;
 
     // 1 means fluid cell, 0 means obstable
-    std::vector<float> m_s;
+    std::vector<CellType> m_s;
 
     std::vector<float> m_density;
 
     float m_advection_speed = 1.0f;
 
+
+
     // staggered grid index
     static int index(int x, int y, int z) {
-        int i = x + y * (RES_X) + z * (RES_X) * (RES_Y);
-        if (i < 0 || i >= RES_X * RES_Y * RES_Z) {
-            return -1;
-        }
-        return i;
+        return (z * RES_X * RES_Y) + (y * RES_X) + x;
     }
 
-    static void inverseIndex(int index, int &x, int &y, int &z) {
+    static void inverseIndex(const int index, int &x, int &y, int &z) {
         z = index / (RES_X * RES_Y);
-        int remainder = index % (RES_X * RES_Y);
-        y = remainder / RES_X;
-        x = remainder % RES_X;
+        const int z_indexed = index - (z*RES_X*RES_Y);
+        y = z_indexed / RES_X;
+        x = z_indexed % RES_X;
     }
 
     template<typename F>
@@ -207,7 +287,7 @@ private:
         for (int i = 0; i < RES_X * RES_Y * RES_Z; i++) {
             int x, y, z;
             inverseIndex(i, x, y, z);
-            if (x != 0 && x < RES_X - 1 && y != 0 && y < RES_Y - 1 && z != 0 && z < RES_Z - 1)
+            if (x > 0 && x < RES_X - 1 && y > 0 && y < RES_Y - 1 && z > 0 && z < RES_Z - 1)
                 func(i, x, y, z);
         }
     }
@@ -220,7 +300,6 @@ private:
     float sample(std::vector<float> &ss_vu, std::vector<float> &ss_vv, std::vector<float> &ss_vw, const int i,
                  const int x, const int y, const int z,
                  SampleDirection direction, float t_step) {
-
         // Vector to move back by, different depending on sample direction
         float vx = safeSample(ss_vu, i, 0.0f) * t_step;
         float vy = safeSample(ss_vv, i, 0.0f) * t_step;
@@ -291,7 +370,6 @@ private:
 
 
     float interpolate(const float nx, const float ny, const float nz, const std::vector<float> &samples) {
-
         float x1 = std::floor(nx);
         float x2 = x1 + 1;
         float y1 = std::floor(ny);
@@ -353,6 +431,12 @@ private:
         }
         return v;
     }
+
+    bool isBoundary(const int i) {
+        int x, y, z;
+        inverseIndex(i, x, y, z);
+        return x == 0 || y == 0 || z == 0 || x == RES_X - 1 || y == RES_Y - 1 || z == RES_Z - 1;
+    }
 };
 
 
@@ -360,41 +444,80 @@ int main() {
     std::ios_base::sync_with_stdio(false);
 
     Renderer renderer;
-    if(renderer.open(WIDTH, HEIGHT) == -1) {
+    if (renderer.open(WIDTH, HEIGHT) == -1) {
         return -1;
     };
 
+    std::cout << "Controls\nSpace: Switch between density / fluid.\nS: Single step simulation.\nP: Play simulation.\n1: Projection\n2: Semi-Lagrange" <<
+            std::endl;
+
     FluidSim sim;
-    // sim.create_sphere_density();
+    sim.create_sphere_density();
+    sim.bottom_influence();
 
     Line l(Eigen::Vector3f(0.0f, 0.0f, 0.0f), Eigen::Vector3f(1.0f, 0.0f, 0.0f));
     Line l1(Eigen::Vector3f(1.0f, 0.0f, 0.0f), Eigen::Vector3f(.6f, 0.2f, 0.0f));
     Line l2(Eigen::Vector3f(1.0f, 0.0f, 0.0f), Eigen::Vector3f(.6f, -0.2f, 0.0f));
+    Line l3(Eigen::Vector3f(1.0f, 0.0f, 0.0f), Eigen::Vector3f(.6f, 0.0f, -0.2f));
+    Line l4(Eigen::Vector3f(1.0f, 0.0f, 0.0f), Eigen::Vector3f(.6f, 0.0f, 0.2f));
 
     double deltaTime = 0.0;
 
+    bool renderFluid = false;
+    int fieldRenderDepth = 1;
+    bool step_only = true;
+
     // Render loop
     while (!renderer.windowHasBeenClosed()) {
+        if (renderer.checkSpaceKeyReleased()) {
+            renderFluid = !renderFluid;
+        }
+
+        if (renderer.pPressed()) step_only = !step_only;
+
+        if (renderer.upPressed()) fieldRenderDepth++;
+        if (renderer.downPressed()) fieldRenderDepth--;
+
+        if(renderer.rPressed()) {
+            sim.clear();
+            sim.bottom_influence();
+        }
+
+
         auto startTime = std::chrono::high_resolution_clock::now();
 
-        sim.sphere_influence(deltaTime / 1000.0f);
-        sim.update(std::min(deltaTime / 1000.0f, 1.0 / 30.0));
+        //sim.sphere_influence(deltaTime / 1000.0f);
+
+        if (!step_only || renderer.sPressed()) {
+            sim.update(1.0 / 30.0);
+
+            std::cout << "Rendering layer " << fieldRenderDepth << '\n';
+            // Print or log the frame time in milliseconds
+            if (deltaTime / 1000.f > 1.0 / 30.0) std::cerr << "Simulation lagging behind.\n";
+            std::cout << "Frame time: " << deltaTime << " ms." << std::endl;
+        }
+
+        if(renderer.Pressed1()) {
+            sim.gauss_seidel_projection();
+        }
+
+        if(renderer.Pressed2()) {
+            sim.semi_lagrange(1.0 / 30.0);
+        }
 
         renderer.clear_frame();
 
-        renderer.bind_fluid_shader_data(WIDTH, HEIGHT, RES_X, RES_Y, RES_Z, sim.get_density());
+        if (renderFluid)
+            renderer.bind_fluid_shader_data(WIDTH, HEIGHT, RES_X, RES_Y, RES_Z, sim.get_density());
+        else {
+            sim.draw_velocity_field(l, l1, l2, l3, l4, fieldRenderDepth);
+        }
 
-        renderer.draw_fluid_quad();
-
-        // sim.draw_velocity_field(l, l1, l2);
+        renderer.draw();
 
         auto endTime = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double, std::milli> elapsed = endTime - startTime;
         deltaTime = elapsed.count();
-
-        // Print or log the frame time in milliseconds
-        if (deltaTime / 1000.f > 1.0 / 30.0) std::cerr << "Simulation lagging behind.\n";
-        std::cout << "Frame time: " << deltaTime << " ms." << std::endl;
     }
 
     // Clean up
