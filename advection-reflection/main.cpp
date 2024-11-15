@@ -40,19 +40,6 @@ public:
         }
     }
 
-    void create_sphere_density() {
-        iterate([this](const int i, const int x, const int y, const int z) {
-            int xx = x - RES_X / 2;
-            int yy = y - RES_Y / 2;
-            int zz = z - RES_Z / 2;
-            if (xx * xx + yy * yy + zz * zz < 8 * 8) {
-                m_density[i] = float(8 * 8 - (xx * xx + yy * yy + zz * zz)) / float(8 * 8) * 0.1;
-            } else {
-                m_density[i] = 0.0;
-            }
-        });
-    }
-
     void sphere_influence(const float radius) {
         iterate([this, &radius](const int i, const int x, const int y, const int z) {
             const float x_centered = x - (RES_X / 2.0f);
@@ -64,11 +51,26 @@ public:
                 const float w = 1.0f - (distance / std::pow(radius, 2.0f));
                 m_s[i] = CellType::StaticFluid;
                 m_density[i] = w;
-                m_vv[i] = 5.0f * w;
+                m_vv[i] = 20.0f * w;
             }
         });
     }
 
+    void fill_sphere_influence(const float radius, const int iter) {
+        iterate([this, &radius, &iter](const int i, const int x, const int y, const int z) {
+            const float x_centered = x - (RES_X / 2.0f);
+            const float y_centered = y - radius;
+            const float z_centered = z - (RES_Z / 2.0f);
+
+            const float distance = std::pow(x_centered, 2.0f) + std::pow(y_centered, 2.0f) + std::pow(z_centered, 2.0f);
+            if (distance < std::pow(radius, 2.0f)) {
+                const float w = 1.0f - (distance / std::pow(radius, 2.0f));
+                if(iter % 100 == 0) {
+                    m_density[i] = w;
+                }
+            }
+        });
+    }
 
     void bottom_influence() {
         iterate([this](const int i, const int x, const int y, const int z) {
@@ -437,6 +439,7 @@ int main() {
             std::endl;
 
     FluidSim sim;
+    int iter = 0;
     // sim.create_sphere_density();
     sim.sphere_influence(RES_X / 10.0f);
 
@@ -480,6 +483,8 @@ int main() {
         //sim.sphere_influence(deltaTime / 1000.0f);
 
         if (!step_only || renderer.sPressed()) {
+            sim.fill_sphere_influence(RES_X / 10.0f, iter);
+            iter++;
             sim.update(1.0 / 30.0);
 
             // Print or log the frame time in milliseconds
