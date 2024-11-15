@@ -72,6 +72,12 @@ public:
             m_vu[i] = (1.0f - (static_cast<float>(x) / static_cast<float>(RES_X))) * 1.0f;
             m_vv[i] = (1.0f - (static_cast<float>(y) / static_cast<float>(RES_Y))) * 1.0f;
             m_vw[i] = (1.0f - (static_cast<float>(z) / static_cast<float>(RES_Z))) * 1.0f;
+
+            /*
+            if(x == 1 || y == 1 || z == 1 ) {
+                m_s[i] = CellType::StaticFluid;
+            }
+            */
         });
     }
 
@@ -131,8 +137,6 @@ public:
             float norm = direction.norm();
             max_norm = std::max(norm, max_norm);
         });
-
-        max_norm = 1.0f;
 
         iterate([this, &l, &l1, &l2, &l3, &l4, &depth, &max_norm](const int i, const int x, const int y, const int z) {
             if (z != depth) return;
@@ -233,8 +237,6 @@ public:
 
         iterate([this, &ss_vv, &ss_vw, &ss_vu, &ss_d, &t_step](const int i, const int x, const int y, const int z) {
             if (m_s[i] == Fluid) {
-
-
                 float dx = ss_vu[i];
                 float dy = (ss_vv[i] + ss_vv[index(x - 1, y, z)] + ss_vv[index(x, y + 1, z)] + ss_vv[index(
                                       x - 1, y + 1, z)]) / 4.0f;
@@ -256,6 +258,13 @@ public:
                                                       x, y + 1, z - 1)]) / 4.0f;
                 dz = ss_vw[i];
                 m_vw[i] = sample(x, y, z, dx, dy, dz, t_step, ss_vw);
+            }
+
+            if(m_s[i] != Object) {
+                float u = (m_vu[i] + m_vu[index(x + 1, y, z)]) / 2.0f;
+                float v = (m_vv[i] + m_vv[index(x, y + 1, z)]) / 2.0f;
+                float w = (m_vw[i] + m_vw[index(x, y, z + 1)]) / 2.0f;
+                m_density[i] = sample(x, y, z, u, v, w, t_step, m_density);
             }
         });
     }
