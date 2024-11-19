@@ -1,5 +1,5 @@
 
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.5)
 project(advection-reflection)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/../cmake)
@@ -29,6 +29,8 @@ if (NOT LIBIGL_FOUND)
     find_package(LIBIGL REQUIRED QUIET)
 endif()
 
+find_package(TBB REQUIRED)
+
 # Add default project files
 file(GLOB LIBFILES ${PROJECT_SOURCE_DIR}/../include/*.*)
 source_group("Library Files" FILES ${LIBFILES})
@@ -38,7 +40,9 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)
 file(GLOB SRCFILES *.cpp)
 file(GLOB HFILES *.h)
 
+
+
 add_definitions(-DIGL_VIEWER_VIEWER_QUIET)
 add_executable(${PROJECT_NAME} ${SRCFILES} ${HFILES} ${LIBFILES}
         Renderer.h)
-target_link_libraries(${PROJECT_NAME} igl::core igl::opengl_glfw igl::opengl_glfw_imgui)
+target_link_libraries(${PROJECT_NAME} igl::core igl::opengl_glfw igl::opengl_glfw_imgui TBB::tbb)
