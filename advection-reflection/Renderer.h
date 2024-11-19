@@ -339,10 +339,19 @@ void main() {
 
     float maxDensity = 0.0f;
     vec4 outputColor = vec4(0.0);
-    for(float t = depth; t <= resolution.z; t += 1.0) {
+    float step = 1.0f;
+    float maxStep = 16.0f;
+    for(float t = depth; t <= resolution.z; t += step) {
 
         vec3 uv = vec3(gl_FragCoord.x / scale.x, gl_FragCoord.y / scale.y, t) / resolution;
         float pointDensity = texture(densityTexture, uv).r;
+
+        // Somehow made the rendering slower?
+        if (pointDensity < 0) {
+            step = min(step * 2.0f, maxStep);  // Limit the step size growth
+        } else {
+            step = 1.0f;
+        }
 
         vec4 sampleColor = vec4(vec3(0.5), pointDensity);
 

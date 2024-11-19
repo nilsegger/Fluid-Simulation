@@ -11,9 +11,9 @@
 
 #define USE_TBB true
 
-const int RES_X = 32;
-const int RES_Y = 32;
-const int RES_Z = 32;
+const int RES_X = 64;
+const int RES_Y = 64;
+const int RES_Z = 64;
 
 const int WIDTH = 768;
 const int HEIGHT = 768;
