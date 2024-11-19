@@ -11,9 +11,9 @@
 
 #define USE_TBB true
 
-const int RES_X = 64;
-const int RES_Y = 64;
-const int RES_Z = 64;
+const int RES_X = 32;
+const int RES_Y = 32;
+const int RES_Z = 32;
 
 const int WIDTH = 768;
 const int HEIGHT = 768;
@@ -456,6 +456,7 @@ int main() {
             std::endl;
 
     FluidSim sim;
+    float viewAngle = 0.0f;
     int iter = 0;
     // sim.create_sphere_density();
     sim.sphere_influence(RES_X / 10.0f);
@@ -471,7 +472,7 @@ int main() {
     bool renderFluid = false;
     int fieldRenderDepth = 1;
     bool step_only = true;
-
+    bool rotate = false;
     // Render loop
     while (!renderer.windowHasBeenClosed()) {
         if (renderer.checkSpaceKeyReleased()) {
@@ -494,6 +495,9 @@ int main() {
             sim.bottom_influence();
         }
 
+        if(renderer.PressedRight()) {
+            rotate = !rotate;
+        }
 
         auto startTime = std::chrono::high_resolution_clock::now();
 
@@ -507,6 +511,10 @@ int main() {
             // Print or log the frame time in milliseconds
             if (deltaTime / 1000.f > 1.0 / 30.0) std::cerr << "Simulation lagging behind.\n";
             std::cout << "Frame time: " << deltaTime << " ms." << std::endl;
+        }
+
+        if(rotate) {
+            viewAngle += (2.0f * 3.14f) / 20.0f * (deltaTime / 1000.f);
         }
 
         /*
@@ -523,7 +531,7 @@ int main() {
         renderer.clear_frame();
 
         if (renderFluid)
-            renderer.bind_fluid_shader_data(WIDTH, HEIGHT, RES_X, RES_Y, RES_Z, sim.get_density(), fieldRenderDepth);
+            renderer.bind_fluid_shader_data(WIDTH, HEIGHT, RES_X, RES_Y, RES_Z, sim.get_density(), fieldRenderDepth, viewAngle);
         else {
             sim.draw_velocity_field(l, l1, l2, l3, l4, fieldRenderDepth);
         }

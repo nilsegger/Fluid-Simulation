@@ -202,13 +202,15 @@ public:
         glClear(GL_COLOR_BUFFER_BIT);
     }
 
-    void bind_fluid_shader_data(const int width, const int height, const int resx, const int resy, const int resz, const std::vector<float>& data, float depth) {
+    void bind_fluid_shader_data(const int width, const int height, const int resx, const int resy, const int resz, const std::vector<float>& data, float depth, float angle) {
         GLint windowLocation = glGetUniformLocation(shaderProgram, "window");
         glUniform2f(windowLocation, width, height);
 
         glUniform3f(glGetUniformLocation(shaderProgram, "resolution"), resx, resy, resz);
 
         glUniform1f(glGetUniformLocation(shaderProgram, "depth"), depth);
+
+        glUniform1f(glGetUniformLocation(shaderProgram, "angle"), angle);
 
         GLuint textureID;
         glGenTextures(1, &textureID);
@@ -294,6 +296,10 @@ public:
         return checkKey(GLFW_KEY_3, keys3Pressed);
     }
 
+    bool PressedRight() {
+        return checkKey(GLFW_KEY_RIGHT, keysRightPressed);
+    }
+
 private:
 
     GLFWwindow *window = nullptr;
@@ -308,6 +314,7 @@ private:
     bool keys1Pressed = false;
     bool keys2Pressed = false;
     bool keys3Pressed = false;
+    bool keysRightPressed = false;
 
     // Vertex shader source code
     const char *vertexShaderSource = R"(
@@ -326,6 +333,7 @@ out vec4 FragColor;
 uniform vec3 resolution;
 uniform vec2 window;
 uniform float depth;
+uniform float angle;
 
 uniform sampler3D densityTexture;
 
@@ -337,6 +345,9 @@ void main() {
     // There is no rotation and no perspective... Hence xy coords can be scaled to resolution xy and z as depth is simply res z
     // Can probably still be optimised a lot by increasing step sizes, when nothing is hit
 
+    vec3 center = vec3(0.5); // UV center
+    vec3 forward = vec3(-sin(angle), 0, -cos(angle));
+
     float maxDensity = 0.0f;
     vec4 outputColor = vec4(0.0);
     float step = 1.0f;
@@ -344,14 +355,30 @@ void main() {
     for(float t = depth; t <= resolution.z; t += step) {
 
         vec3 uv = vec3(gl_FragCoord.x / scale.x, gl_FragCoord.y / scale.y, t) / resolution;
-        float pointDensity = texture(densityTexture, uv).r;
+        vec3 uv_centered = uv - center;
+
+        float theta = angle;
+        float cosTheta = cos(theta);
+        float sinTheta = sin(theta);
+
+        // Rotate uvCentered around Y-axis
+        vec3 rotatedUV;
+        rotatedUV.x = cosTheta * uv_centered.x + sinTheta * uv_centered.z;
+        rotatedUV.y = uv_centered.y;
+        rotatedUV.z = -sinTheta * uv_centered.x + cosTheta * uv_centered.z;
+
+        rotatedUV += center;
+
+        float pointDensity = texture(densityTexture, rotatedUV).r * ((1.0f - (t / resolution.x)) * 0.9f + 0.1f);
 
         // Somehow made the rendering slower?
-        if (pointDensity < 0) {
+        /*
+        if (pointDensity < 0.001) {
             step = min(step * 2.0f, maxStep);  // Limit the step size growth
         } else {
             step = 1.0f;
         }
+        */
 
         vec4 sampleColor = vec4(vec3(0.5), pointDensity);
 
