@@ -8,9 +8,9 @@
 
 #include "Renderer.h"
 
-const int RES_X = 64;
-const int RES_Y = 64;
-const int RES_Z = 64;
+const int RES_X = 32;
+const int RES_Y = 32;
+const int RES_Z = 32;
 
 const int WIDTH = 768;
 const int HEIGHT = 768;
@@ -18,6 +18,8 @@ const int HEIGHT = 768;
 const float DX = 1.0f;
 const float DY = 1.0f;
 const float DZ = 1.0f;
+
+// TODO: maybe use TBB for parallel work
 
 class FluidSim {
 public:
