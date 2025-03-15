@@ -2,7 +2,7 @@
 
 ## Fluid Simulation
 
-A C++ implementation of the paper [Advection-Reflection Solver for Fluids](https://jzehnder.me/publications/advectionReflection/paper.pdf) using the Gauss-Seidel algorithm for incrompressability and advection using semi-lagrangian.
+A C++ implementation of the paper [Advection-Reflection Solver for Fluids](https://jzehnder.me/publications/advectionReflection/paper.pdf) using the Gauss-Seidel algorithm for incrompressability and semi-lagrangian for advection. The simulation is in 3D.
 
 
 Here is a demo video of a simulation of a vortex ring.
