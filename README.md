@@ -1,5 +1,13 @@
 # Physically-based Simulation in Computer Graphics HS2024 - Course Exercises
 
+## Fluid Simulation
+
+A C++ implementation of the paper [Advection-Reflection Solver for Fluids](https://jzehnder.me/publications/advectionReflection/paper.pdf) using the Gauss-Seidel algorithm for incrompressability and advection using semi-lagrangian.
+
+Watch the video of a vortex ring simulation.
+[![Watch the video](https://img.youtube.com/vi/Rtvxnun4Ti8/maxresdefault.jpg)](https://youtu.be/Rtvxnun4Ti8)
+
+
 ## Installation
 
 ### Git and CMAKE
