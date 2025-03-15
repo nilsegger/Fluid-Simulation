@@ -4,7 +4,8 @@
 
 A C++ implementation of the paper [Advection-Reflection Solver for Fluids](https://jzehnder.me/publications/advectionReflection/paper.pdf) using the Gauss-Seidel algorithm for incrompressability and advection using semi-lagrangian.
 
-Watch the video of a vortex ring simulation.
+
+Here is a demo video of a simulation of a vortex ring.
 [![Watch the video](https://img.youtube.com/vi/Rtvxnun4Ti8/maxresdefault.jpg)](https://youtu.be/Rtvxnun4Ti8)
 
 
